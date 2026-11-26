@@ -1,6 +1,7 @@
 // Buffers are reused between calls so the inner loop never allocates.
 let row = new Int32Array(0);
 let codes = new Uint16Array(0);
+let characterMasks;
 
 // Releasing buffers above this size on the next call that needs them keeps a single huge comparison from holding on to its memory for the rest of the process.
 const maximumRetainedColumns = 2 ** 20;
@@ -46,11 +47,15 @@ export default function leven(first, second, options) {
 
 	// A distance is a whole number, so a cap that is not a non-negative integer cannot bound the table and is ignored.
 	if (!Number.isSafeInteger(maxDistance) || maxDistance < 0) {
+		if (firstLength >= 8 && firstLength <= 32) {
+			return singleWordDistance(first, second, start, firstLength, secondLength);
+		}
+
 		return firstLength === 0 ? secondLength : fullDistance(first, second, start, firstLength, secondLength);
 	}
 
-	// Early termination after trimming: if difference in length exceeds max distance
-	if (secondLength - firstLength > maxDistance) {
+	// A lower bound equal to the cap already determines the capped result.
+	if (secondLength - firstLength >= maxDistance) {
 		return maxDistance;
 	}
 
@@ -99,7 +104,51 @@ function fullDistance(first, second, start, firstLength, secondLength) {
 	return current;
 }
 
-// Same dynamic programming table as `fullDistance`, but only the cells within `maxDistance` of the diagonal are computed. Every path that stays within the cap runs through that band, so the result is exact, and a row whose minimum rises above the cap rules out every path through it.
+// Myers' bit-vector algorithm packs a column of the distance table into one
+// machine word. Tiny comparisons use the scalar loop to avoid building masks.
+function singleWordDistance(first, second, start, firstLength, secondLength) {
+	// eslint-disable-next-line unicorn/logical-assignment-operators -- Keep the syntax compatible with Node.js 14.
+	if (!characterMasks) {
+		characterMasks = new Int32Array(2 ** 16);
+	}
+
+	for (let index = 0; index < firstLength; index++) {
+		characterMasks[first.charCodeAt(start + index)] |= 1 << index;
+	}
+
+	let positive = -1;
+	let negative = 0;
+	let distance = firstLength;
+	const lastBit = 1 << (firstLength - 1);
+
+	for (let index = 0; index < secondLength; index++) {
+		const matches = characterMasks[second.charCodeAt(start + index)];
+		const vertical = matches | negative;
+		const horizontal = (((matches & positive) + positive) ^ positive) | matches;
+		let increase = negative | ~(horizontal | positive);
+		let decrease = positive & horizontal;
+
+		if ((increase & lastBit) !== 0) {
+			distance++;
+		} else if ((decrease & lastBit) !== 0) {
+			distance--;
+		}
+
+		increase = (increase << 1) | 1;
+		decrease <<= 1;
+		positive = decrease | ~(vertical | increase);
+		negative = increase & vertical;
+	}
+
+	// Only the code units in the pattern need clearing between comparisons.
+	for (let index = 0; index < firstLength; index++) {
+		characterMasks[first.charCodeAt(start + index)] = 0;
+	}
+
+	return distance;
+}
+
+// Same dynamic programming table as `fullDistance`, but only the cells within `maxDistance` of the diagonal are computed. Every path costing less than the cap runs through that band.
 function bandedDistance(first, second, start, firstLength, secondLength, maxDistance) {
 	prepare(first, start, firstLength);
 
@@ -129,8 +178,8 @@ function bandedDistance(first, second, start, firstLength, secondLength, maxDist
 			}
 		}
 
-		// Early termination: if all values in current row exceed maxDistance
-		if (rowMinimum > maxDistance) {
+		// Every remaining path crosses this row and edits have non-negative cost.
+		if (rowMinimum >= maxDistance) {
 			return maxDistance;
 		}
 	}

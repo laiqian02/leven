@@ -113,6 +113,41 @@ test('every length combination agrees with a full distance table', () => {
 	}
 });
 
+test('exact distances around the 32-code-unit boundary', () => {
+	for (const length of [31, 32, 33]) {
+		const pattern = 'abc'.repeat(11).slice(0, length);
+		const shifted = `!${pattern}?`;
+		const cases = [
+			[pattern, shifted],
+			[pattern, 'x'.repeat(length * 8) + shifted],
+			[`shared prefix ${pattern} / shared suffix`, `shared prefix ${shifted} / shared suffix`],
+		];
+
+		for (const [first, second] of cases) {
+			const expected = referenceDistance(first, second);
+			assert.equal(leven(first, second), expected);
+			assert.equal(leven(second, first), expected);
+		}
+	}
+});
+
+test('consecutive exact comparisons distinguish all UTF-16 code units', () => {
+	// A and Ł share their low byte. The emoji share their first surrogate.
+	const pairs = [
+		['A'.repeat(32), 'Ł'.repeat(32)],
+		['ŁA'.repeat(16), 'AŁ'.repeat(16)],
+		['😀中'.repeat(10), '国😁'.repeat(10)],
+		['中A😀'.repeat(8), 'Ł😁国'.repeat(8)],
+		['A'.repeat(32), 'Ł'.repeat(32)],
+	];
+
+	for (const [first, second] of pairs) {
+		const expected = referenceDistance(first, second);
+		assert.equal(leven(first, second), expected);
+		assert.equal(leven(second, first), expected);
+	}
+});
+
 test('strings longer than the initial buffer', () => {
 	// The buffers are reused and start out small, so check strings long enough to grow them, then shorter ones to check the grown buffers are reused. The shared text is shifted, so a wrong first row or character code past the initial size changes the result.
 	const text = 'the quick brown fox jumps over the lazy dog';

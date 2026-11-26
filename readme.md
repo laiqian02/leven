@@ -5,7 +5,31 @@
 ## Install
 
 ```sh
-npm install leven
+npm install github:laiqian02/leven
+```
+
+## Short-string performance in this fork
+
+Ranking eight misspelled command queries against eight command labels took **90.3% less time per exact distance calculation** in a local run. This workload calls `leven` on all 64 pairs to obtain every score. It measures the scoring step of a command palette.
+
+After trimming shared prefixes and suffixes, the fork uses Myers' bit-vector algorithm when the shorter input has 8–32 UTF-16 code units and the caller requests an exact distance. A 32-bit word tracks the entire short side of the comparison. The first use allocates a reusable 256 KiB character table. For capped comparisons, reaching the cap with a proven lower bound now returns immediately.
+
+| Workload | Upstream (ns/pair) | Fork (ns/pair) | Elapsed time change |
+| --- | ---: | ---: | ---: |
+| Rank command labels, exact | 1240.2 | 119.8 | 90.3% less |
+| Same labels, distance capped at 2 | 61.1 | 35.1 | 42.5% less |
+| Short words (3–7 code units) | 41.3 | 42.2 | 2.1% more |
+| Long titles (33–64 code units) | 2263.7 | 2288.4 | 1.1% more |
+
+The table shows the third of three runs on Windows x64, Node.js 24.15.0, Intel Core i7-14700KF. Each run checks every pair against upstream commit `0c8c7f4`, warms both versions, alternates execution order and reports the median of nine rounds per version. Across the three runs, the exact command workload took 89.8–90.5% less time. The short-word workload took 2.1–5.6% more time. Long-title results varied from 2.3% less to 8.7% more time.
+
+To reproduce the comparison, run these commands with Node.js 24 and Git.
+
+```sh
+git clone https://github.com/laiqian02/leven.git
+cd leven
+node --test test.js
+node benchmark-short.js
 ```
 
 ## Usage
